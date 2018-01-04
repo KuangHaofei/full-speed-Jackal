@@ -26,3 +26,4 @@ roslaunch leg_detector jackal_leg_detector.launch
 ```
 rosrun rviz rviz
 ```
+# full-speed-Jackal
