@@ -8,13 +8,14 @@ project(mpc)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  tf
-  std_msgs
-  nav_msgs
-  geometry_msgs
-)
+        roscpp
+        rospy
+        tf
+        std_msgs
+        nav_msgs
+        geometry_msgs
+        sensor_msgs
+        )
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -106,10 +107,10 @@ find_package(catkin REQUIRED COMPONENTS
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-  INCLUDE_DIRS include
-#  LIBRARIES mpc
-#  CATKIN_DEPENDS   std_msgs nav_msgs geometry_msgs
-#  DEPENDS system_lib
+        INCLUDE_DIRS include
+        #  LIBRARIES mpc
+        #  CATKIN_DEPENDS   std_msgs nav_msgs geometry_msgs
+        #  DEPENDS system_lib
 )
 
 ###########
@@ -123,11 +124,11 @@ include_directories(
 )
 
 ## Declare a C++ library
- add_library(${PROJECT_NAME}
-         include/mpc/Robot.h
-         src/Robot.cpp
-         src/main.cpp
- )
+add_library(${PROJECT_NAME}
+        include/mpc/Robot.h
+        src/Robot.cpp
+        src/main.cpp
+        )
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -137,7 +138,12 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(move src/main.cpp include/mpc/Robot.h src/Robot.cpp)
+add_executable(move src/main.cpp
+        include/mpc/Robot.h
+        include/mpc/dub_car_ocp.h
+        src/Robot.cpp
+        src/dub_car_ocp.cpp
+        )
 
 
 ## Rename C++ executable without prefix
@@ -151,7 +157,7 @@ add_executable(move src/main.cpp include/mpc/Robot.h src/Robot.cpp)
 add_dependencies(move ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(move ${catkin_LIBRARIES} ${PROJECT_NAME})
+target_link_libraries(move ${catkin_LIBRARIES} ${PROJECT_NAME} nlopt m)
 
 
 #############
