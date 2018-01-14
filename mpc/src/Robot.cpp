@@ -6,14 +6,39 @@
 Robot::Robot(ros::NodeHandle &n) : laser_beam(180) {
     this->n = n;
 
-    this->Kp = 10.0;
-    this->Ki = 0.1;
-    this->Kd = 0.05;
+    this->KGp = 4.0;
+    this->KGi = 0.1;
+    this->KGd = 0.01;
 
-    this->E_k = 0.0;
-    this->e_k_1 = 0.0;
+    this->KAp = 10.0;
+    this->KAi = 0.1;
+    this->KAd = 0.05;
 
-    this->reached = false;
+    this->KAGp = 4.0;
+    this->KAGi = 0.1;
+    this->KAGd = 0.05;
+
+
+    this->E_A_k = 0.0;
+    this->e_a_k_1 = 0.0;
+
+    this->E_AG_k = 0.0;
+    this->e_a_k_1 = 0.0;
+
+    this->E_A_k = 0.0;
+    this->e_a_k_1 = 0.0;
+
+    this->destination.x = 0.0;
+    this->destination.y = 0.0;
+
+    this->delta_t = 0.0;
+
+    this->current_state = "AO_and_GTG";
+
+    this->reach_tolerance = 0.1;
+    this->at_obstacle_tolerance = 3;
+    this->unsafe_tolerance = 2;
+    this->dangerous_tolerance = 0.7;
 
     this->size = 0;
 }
@@ -70,6 +95,19 @@ void Robot::GetLaserCallback(const sensor_msgs::LaserScan::ConstPtr &laser_msg) 
     this->size = this->laser_beam.size();
 }
 
+void Robot::PublishTist(ControlSignal control_signal) {
+    control_signal.w = max(control_signal.w, -1.0);
+    control_signal.w = min(control_signal.w, 1.0);
+
+    // Print velocity
+    ROS_INFO("Velocity: [%f, %f]", control_signal.v, control_signal.w);
+
+    // publish velocity
+    this->twist.linear.x = control_signal.v;
+    this->twist.angular.z = control_signal.w;
+
+    this->cmd_pub.publish(this->twist);
+}
 
 tf::Transform Robot::get_transformation_matrix(double x, double y, double z, double theta) {
     tf::Transform T;
@@ -110,7 +148,7 @@ Vector2D Robot::GetAvoidVector(double x, double y, double z) {
         W_T_R = get_transformation_matrix(current_position.x, current_position.y, 0.0, current_position.theta);
         global_laser_point = W_T_R * robot_laser_point;
 
-        if ( i == 89 ) {
+        if (i > 84 && i < 95) {
             sum_vector.x += (global_laser_point.getX() - current_position.x) * 3; //* laser_gain[i];
             sum_vector.y += (global_laser_point.getY() - current_position.y) * 3;
         } else {
@@ -123,21 +161,32 @@ Vector2D Robot::GetAvoidVector(double x, double y, double z) {
 }
 
 void Robot::PrintRobotState() {
-    ROS_INFO("Current State: %f, %f, %f\n",
+    ROS_INFO("Current State: Position [%f, %f, %f]",
              current_position.x, current_position.y, current_position.theta);
-    ROS_INFO("Size: %d\n", this->size);
+    ROS_INFO("Stata: %s", this->current_state.c_str());
+//    ROS_INFO("Size: %d\n", this->size);
+}
+
+void Robot::SetDestination(double x, double y) {
+    this->destination.x = x;
+    this->destination.y = y;
+}
+
+void Robot::Set_delta_t(double delta_t) {
+    this->delta_t = delta_t;
 }
 
 void Robot::GoToAngle(double theta_d) {
     // initialize velocity
     double v = 1.5;
     double w = 0.0;
+    double Kp = 1;
 
     // define angle error
     double e_k = theta_d - current_position.theta;
     e_k = atan2(sin(e_k), cos(e_k));
 
-    w = this->Kp * e_k;
+    w = Kp * e_k;
 
     this->twist.linear.x = v;
     this->twist.angular.z = w;
@@ -145,16 +194,108 @@ void Robot::GoToAngle(double theta_d) {
     cmd_pub.publish(twist);
 }
 
-void Robot::isReach(double x_d, double y_d, double tolerance) {
-    double distance = sqrt( pow(current_position.x - x_d, 2) + pow(current_position.y - y_d, 2) );
+bool Robot::isReach() {
+    double distance = sqrt(pow(current_position.x - this->destination.x, 2)
+                           + pow(current_position.y - this->destination.y, 2));
+    bool reach = false;
 
-    if (distance < tolerance) {
-        this->reached = true;
+    if (distance < this->reach_tolerance) {
+        ROS_INFO("At Goal!");
+        reach = true;
+    }
+
+    return reach;
+}
+
+bool Robot::atObstacle() {
+    double count = laser_beam.size();
+
+    for (int i = 0; i < count; i++) {
+        if (laser_beam[i].range < this->at_obstacle_tolerance) {
+            ROS_INFO("At Obstacle!");
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Robot::unSafe() {
+    double count = laser_beam.size();
+
+    for (int i = 0; i < count; i++) {
+        if (laser_beam[i].range < this->unsafe_tolerance) {
+            ROS_INFO("Unsafe!!!");
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Robot::obstacleCleared() {
+    double count = laser_beam.size();
+
+    for (int i = 0; i < count; i++) {
+        if (laser_beam[i].range < this->at_obstacle_tolerance) {
+            return false;
+        }
+    }
+    ROS_INFO("Obstacle Cleared! Safe!");
+    return true;
+}
+
+
+bool Robot::dangerous() {
+    double count = laser_beam.size();
+    int num = 0;
+
+    for (int i = 60; i < 120; i++) {
+        if (laser_beam[i].range < this->dangerous_tolerance) {
+            num++;
+            if (num > 2){
+                ROS_INFO("Dangerous! Stop!");
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+double Robot::smallest_distance() {
+    double count = laser_beam.size();
+    double smallest_num = INFINITY;
+
+    for (int i = 60; i < 120; i++) {
+        if (laser_beam[i].range < smallest_num) {
+            smallest_num = laser_beam[i].range;
+        }
+    }
+    return smallest_num;
+}
+
+bool Robot::check_event(string state) {
+    if (state == "at_goal") {
+        return isReach();
+    } else if (state == "at_obstacle") {
+        return atObstacle();
+    } else if (state == "unsafe") {
+        return unSafe();
+    } else if (state == "obstacle_cleared") {
+        return obstacleCleared();
+    } else {
+        ROS_INFO("Error Event! Please Check!");
+        return false;
     }
 }
 
-void Robot::GoToGoal(double x_d, double y_d, double delta_t) {
-    double v = 1.0;
+void Robot::switchState(string state) {
+    ROS_INFO("Change State to %s!", state.c_str());
+    this->current_state = state;
+}
+
+
+ControlSignal Robot::GoToGoal() {
+    ControlSignal control_signal;
+    double v = 0.2;
     double w = 0.0;
     double theta_d = 0.0;
     double e_k = 0.0;
@@ -162,7 +303,7 @@ void Robot::GoToGoal(double x_d, double y_d, double delta_t) {
     double e_p, e_i, e_d;
 
     // compute angle from robot to goal
-    theta_d = atan2(y_d - current_position.y, x_d - current_position.x);
+    theta_d = atan2(this->destination.y - current_position.y, this->destination.x - current_position.x);
 
     // compute error
     e_k = theta_d - current_position.theta;
@@ -170,22 +311,32 @@ void Robot::GoToGoal(double x_d, double y_d, double delta_t) {
 
     // define PID
     e_p = e_k;
-    e_i = this->E_k + e_k * delta_t;
-    e_d = (e_k - e_k_1) * delta_t;
+    e_i = this->E_G_k + e_k * delta_t;
+    e_d = (e_k - this->e_g_k_1) * delta_t;
 
-    w = this->Kp * e_p + this->Ki * e_i + this->Kd * e_d;
+    w = this->KGp * e_p + this->KGi * e_i + this->KGd * e_d;
 
-    this->E_k = e_i;
-    this->e_k_1 = e_k;
+    this->E_G_k = e_i;
+    this->e_g_k_1 = e_k;
 
-    // publish velocity
-    this->twist.linear.x = v;
-    this->twist.angular.z = w;
+    // linear velocity restrict
+    double gain_d = 1;
+    double gain_w = 0.25;
+    double distance = sqrt(pow(current_position.x - this->destination.x, 2)
+                           + pow(current_position.y - this->destination.y, 2));
+    v = v + gain_d * distance;
+    v = min(v, 1.5);
+    v = v - fabs(gain_w * w);
+    v = max(v, 0.0);
 
-    cmd_pub.publish(twist);
+    control_signal.v = v;
+    control_signal.w = w;
+
+    return control_signal;
 }
 
-void Robot::AvoidObstacles(double delta_t) {
+ControlSignal Robot::AvoidObstacles() {
+    ControlSignal control_signal;
     double v = 1.5;
     double w = 0.0;
     double theta_d = 0.0;
@@ -212,19 +363,139 @@ void Robot::AvoidObstacles(double delta_t) {
 
     // define PID
     e_p = e_k;
-    e_i = this->E_k + e_k * delta_t;
-    e_d = (e_k - e_k_1) * delta_t;
+    e_i = this->E_A_k + e_k * this->delta_t;
+    e_d = (e_k - this->e_a_k_1) * this->delta_t;
 
-    w = this->Kp * e_p + this->Ki * e_i + this->Kd * e_d;
+    w = this->KAp * e_p + this->KAi * e_i + this->KAd * e_d;
 
-    this->E_k = e_i;
-    this->e_k_1 = e_k;
+    this->E_A_k = e_i;
+    this->e_a_k_1 = e_k;
 
-    // publish velocity
-    this->twist.linear.x = v;
-    this->twist.angular.z = w;
+    // linear velocity restrict
+    double gain_w = 0.05;
+    v = max(v - fabs(gain_w * w), 0.0);
+    v = smallest_distance() / 1;
 
-    cmd_pub.publish(twist);
+    if (dangerous()){
+        v = 0.0;
+        w = w * 10;
+    }
+
+    control_signal.v = v;
+    control_signal.w = w;
+
+    return control_signal;
+}
+
+ControlSignal Robot::AOandGTG() {
+    ControlSignal control_signal;
+    double v = 0.5;
+    double w = 0.0;
+    double theta_d = 0.0;
+    double e_k = 0.0;
+
+    double e_p, e_i, e_d;
+
+    Vector2D u_ao;
+    Vector2D u_gtg;
+    Vector2D u_ao_gtg;
+    double x_s = 0.120;
+    double y_s = 0.000;
+    double z_s = 0.267;
+
+    // get obstacles vector
+    u_ao = GetAvoidVector(x_s, y_s, z_s);
+
+    // compute angle from robot to goal
+    u_gtg.x = destination.x - current_position.x;
+    u_gtg.y = destination.y - current_position.y;
+
+    double alpha = 0.9;
+    u_ao_gtg.x = alpha * u_gtg.x + (1 - alpha) * u_ao.x;
+    u_ao_gtg.y = alpha * u_gtg.y + (1 - alpha) * u_ao.y;
+
+    theta_d = atan2(u_ao_gtg.y, u_ao_gtg.x);
+    ROS_INFO("theta_d: %f", theta_d);
+
+    // compute error
+    e_k = theta_d - current_position.theta;
+    e_k = atan2(sin(e_k), cos(e_k));
+
+    // define PID
+    e_p = e_k;
+    e_i = this->E_AG_k + e_k * this->delta_t;
+    e_d = (e_k - this->e_ag_k_1) * this->delta_t;
+
+    w = this->KAGp * e_p + this->KAGi * e_i + this->KAGd * e_d;
+
+    this->E_AG_k = e_i;
+    this->e_ag_k_1 = e_k;
+
+    // linear velocity restrict
+    double gain_d = 1.0;
+    double gain_w = 1.0;
+    double distance = sqrt(pow(current_position.x - this->destination.x, 2)
+                           + pow(current_position.y - this->destination.y, 2));
+    v = v + gain_d * distance;
+    v = min(v, 1.5);
+    v = v - fabs(gain_w * w);
+    v = max(v, 0.0);
+
+    control_signal.v = v;
+    control_signal.w = w;
+
+    return control_signal;
+}
+
+ControlSignal Robot::Stop() {
+    ControlSignal control_signal;
+
+    double v = 0.0;
+    double w = 0.0;
+
+    control_signal.v = v;
+    control_signal.w = w;
+
+    return control_signal;
+}
+
+void Robot::execute() {
+    ControlSignal control_signal;
+    control_signal.v = 0.0;
+    control_signal.w = 0.0;
+
+//    if (check_event("at_goal")) {
+//        switchState("Stop");
+//    } else {
+//        if (check_event("unsafe")) {
+//            switchState("Avoid_Obstacle");
+//        } else if (check_event("at_obstacle")) {
+//            switchState("AO_and_GTG");
+//        } else if (check_event("obstacle_cleared")) {
+//            switchState("Go_to_Goal");
+//        }
+//    }
+//
+//    if (this->current_state == "Stop") {
+//        control_signal = Stop();
+//    } else if (this->current_state == "AO_and_GTG") {
+//        control_signal = AOandGTG();
+//    } else if (this->current_state == "Avoid_Obstacle") {
+//        control_signal = AvoidObstacles();
+//    } else if (this->current_state == "Go_to_Goal") {
+//        control_signal = GoToGoal();
+//    }
+
+//    if (check_event("at_goal")){
+//        control_signal = Stop();
+//    } else {
+//        control_signal = GoToGoal();
+//    }
+
+    control_signal = AvoidObstacles();
+
+    // Publish velocity
+    PublishTist(control_signal);
 }
 
 void Robot::MPC_Model(double end_x, double end_y, double delta_t) {
