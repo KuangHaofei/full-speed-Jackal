@@ -45,8 +45,8 @@ int main(int argc, char **argv) {
     ros::Rate loop_rate(f);
     double delta_t = 1 / f;
 
-    double x_d = 0.0;
-    double y_d = 0.0;
+    double x_d = -5.0;
+    double y_d = -5.0;
 
     robot.SetDestination(x_d, y_d);
     robot.Set_delta_t(delta_t);
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
         robot.execute();
 
         ROS_INFO("Target position: %f, %f\n", x_d, y_d);
-//        robot.PrintRobotState();
+        robot.PrintRobotState();
 
         ros::spinOnce();
         loop_rate.sleep();

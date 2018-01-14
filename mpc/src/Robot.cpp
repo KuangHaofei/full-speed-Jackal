@@ -6,15 +6,15 @@
 Robot::Robot(ros::NodeHandle &n) : laser_beam(180) {
     this->n = n;
 
-    this->KGp = 4.0;
+    this->KGp = 8.0;
     this->KGi = 0.1;
     this->KGd = 0.01;
 
-    this->KAp = 10.0;
+    this->KAp = 8.0;
     this->KAi = 0.1;
     this->KAd = 0.05;
 
-    this->KAGp = 4.0;
+    this->KAGp = 8.0;
     this->KAGi = 0.1;
     this->KAGd = 0.05;
 
@@ -35,10 +35,11 @@ Robot::Robot(ros::NodeHandle &n) : laser_beam(180) {
 
     this->current_state = "AO_and_GTG";
 
-    this->reach_tolerance = 0.1;
-    this->at_obstacle_tolerance = 3;
-    this->unsafe_tolerance = 2;
+    this->reach_tolerance = 0.2;
+    this->at_obstacle_tolerance = 1.5;
+    this->unsafe_tolerance = 1;
     this->dangerous_tolerance = 0.7;
+    this->closetogoal_tolerance = 2;
 
     this->size = 0;
 }
@@ -99,6 +100,8 @@ void Robot::PublishTist(ControlSignal control_signal) {
     control_signal.w = max(control_signal.w, -1.0);
     control_signal.w = min(control_signal.w, 1.0);
 
+    control_signal.v = min(control_signal.v, 1.5);
+
     // Print velocity
     ROS_INFO("Velocity: [%f, %f]", control_signal.v, control_signal.w);
 
@@ -149,8 +152,8 @@ Vector2D Robot::GetAvoidVector(double x, double y, double z) {
         global_laser_point = W_T_R * robot_laser_point;
 
         if (i > 84 && i < 95) {
-            sum_vector.x += (global_laser_point.getX() - current_position.x) * 3; //* laser_gain[i];
-            sum_vector.y += (global_laser_point.getY() - current_position.y) * 3;
+            sum_vector.x += (global_laser_point.getX() - current_position.x) * 0.5; //* laser_gain[i];
+            sum_vector.y += (global_laser_point.getY() - current_position.y) * 0.5;
         } else {
             sum_vector.x += (global_laser_point.getX() - current_position.x); //* laser_gain[i];
             sum_vector.y += (global_laser_point.getY() - current_position.y); //* laser_gain[i];
@@ -260,6 +263,20 @@ bool Robot::dangerous() {
     return false;
 }
 
+bool Robot::closeToGoal() {
+    double distance = sqrt(pow(current_position.x - this->destination.x, 2)
+                           + pow(current_position.y - this->destination.y, 2));
+
+    bool close = false;
+
+    if (distance < this->closetogoal_tolerance) {
+        close = true;
+    }
+
+    return close;
+}
+
+
 double Robot::smallest_distance() {
     double count = laser_beam.size();
     double smallest_num = INFINITY;
@@ -281,6 +298,10 @@ bool Robot::check_event(string state) {
         return unSafe();
     } else if (state == "obstacle_cleared") {
         return obstacleCleared();
+    } else if (state == "dangerous") {
+        return dangerous();
+    } else if (state == "close_to_goal") {
+        return closeToGoal();
     } else {
         ROS_INFO("Error Event! Please Check!");
         return false;
@@ -337,7 +358,7 @@ ControlSignal Robot::GoToGoal() {
 
 ControlSignal Robot::AvoidObstacles() {
     ControlSignal control_signal;
-    double v = 1.5;
+    double v = smallest_distance() / 1.5;
     double w = 0.0;
     double theta_d = 0.0;
     double e_k = 0.0;
@@ -374,7 +395,6 @@ ControlSignal Robot::AvoidObstacles() {
     // linear velocity restrict
     double gain_w = 0.05;
     v = max(v - fabs(gain_w * w), 0.0);
-    v = smallest_distance() / 1;
 
     if (dangerous()){
         v = 0.0;
@@ -410,7 +430,7 @@ ControlSignal Robot::AOandGTG() {
     u_gtg.x = destination.x - current_position.x;
     u_gtg.y = destination.y - current_position.y;
 
-    double alpha = 0.9;
+    double alpha = 0.8;
     u_ao_gtg.x = alpha * u_gtg.x + (1 - alpha) * u_ao.x;
     u_ao_gtg.y = alpha * u_gtg.y + (1 - alpha) * u_ao.y;
 
@@ -433,13 +453,18 @@ ControlSignal Robot::AOandGTG() {
 
     // linear velocity restrict
     double gain_d = 1.0;
-    double gain_w = 1.0;
+    double gain_w = 0.5;
     double distance = sqrt(pow(current_position.x - this->destination.x, 2)
                            + pow(current_position.y - this->destination.y, 2));
     v = v + gain_d * distance;
     v = min(v, 1.5);
     v = v - fabs(gain_w * w);
     v = max(v, 0.0);
+
+    if (dangerous()){
+        v = 0.0;
+        w = w * 10;
+    }
 
     control_signal.v = v;
     control_signal.w = w;
@@ -464,35 +489,29 @@ void Robot::execute() {
     control_signal.v = 0.0;
     control_signal.w = 0.0;
 
-//    if (check_event("at_goal")) {
-//        switchState("Stop");
-//    } else {
-//        if (check_event("unsafe")) {
-//            switchState("Avoid_Obstacle");
-//        } else if (check_event("at_obstacle")) {
-//            switchState("AO_and_GTG");
-//        } else if (check_event("obstacle_cleared")) {
-//            switchState("Go_to_Goal");
-//        }
-//    }
-//
-//    if (this->current_state == "Stop") {
-//        control_signal = Stop();
-//    } else if (this->current_state == "AO_and_GTG") {
-//        control_signal = AOandGTG();
-//    } else if (this->current_state == "Avoid_Obstacle") {
-//        control_signal = AvoidObstacles();
-//    } else if (this->current_state == "Go_to_Goal") {
-//        control_signal = GoToGoal();
-//    }
+    if (check_event("at_goal")) {
+        switchState("Stop");
+    } else {
+        if (check_event("unsafe")) {
+            switchState("Avoid_Obstacle");
+        } else if ( check_event("close_to_goal") && !check_event("dangerous")) {
+            switchState("Go_to_Goal");
+        } else if (check_event("at_obstacle")) {
+            switchState("AO_and_GTG");
+        } else if (check_event("obstacle_cleared")) {
+            switchState("Go_to_Goal");
+        }
+    }
 
-//    if (check_event("at_goal")){
-//        control_signal = Stop();
-//    } else {
-//        control_signal = GoToGoal();
-//    }
-
-    control_signal = AvoidObstacles();
+    if (this->current_state == "Stop") {
+        control_signal = Stop();
+    } else if (this->current_state == "AO_and_GTG") {
+        control_signal = AOandGTG();
+    } else if (this->current_state == "Avoid_Obstacle") {
+        control_signal = AvoidObstacles();
+    } else if (this->current_state == "Go_to_Goal") {
+        control_signal = GoToGoal();
+    }
 
     // Publish velocity
     PublishTist(control_signal);

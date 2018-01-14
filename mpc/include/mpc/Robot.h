@@ -107,6 +107,7 @@ private:
     double at_obstacle_tolerance;
     double unsafe_tolerance;
     double dangerous_tolerance;
+    double closetogoal_tolerance;
 
     // Guard function
     bool isReach();
@@ -114,6 +115,7 @@ private:
     bool unSafe();
     bool obstacleCleared();
     bool dangerous();
+    bool closeToGoal();
 
     double smallest_distance();
 
@@ -122,6 +124,8 @@ private:
     // at_obstacle
     // unsafe
     // obstacle_cleared
+    // dangerous
+    // close_to_goal
     bool check_event(string state);
 
     // switch state
